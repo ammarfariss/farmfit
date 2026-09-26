@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import threading
 import traceback
@@ -21,7 +22,18 @@ from pydantic import BaseModel
 from .schemas import OptimizeRequest, PlotSpec
 
 app = FastAPI(title="FarmFit optimizer service", version="0.2.0")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"], allow_methods=["*"], allow_headers=["*"])
+
+# Local development plus an optional comma-separated production allow-list.
+# For the public hackathon deployment we set ALLOWED_ORIGINS to the Vercel frontend URL.
+_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+_extra_origins = [item.strip() for item in os.getenv("ALLOWED_ORIGINS", "").split(",") if item.strip()]
+_origins.extend(_extra_origins)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/api/health")
