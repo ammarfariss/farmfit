@@ -172,6 +172,7 @@ export default function InputsStep({ cat, missingInputs, site, siteLoading, site
                   <span className="text-[12px]">{cat.crops[m.owner]?.name ?? m.owner}</span>
                   <input
                     className="field"
+                    aria-label={`${cat.crops[m.owner]?.name ?? m.owner} selling price in QAR per kg`}
                     type="number"
                     min={0}
                     step="0.25"
