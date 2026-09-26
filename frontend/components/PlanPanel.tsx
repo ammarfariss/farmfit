@@ -37,15 +37,21 @@ export default function PlanPanel(p: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      <nav className="flex border-b border-[var(--line-strong)]">
+      <div className="border-b border-[var(--line)] bg-[#f4f7ed] px-6 pb-5 pt-6">
+        <div className="eyebrow">FARMFIT / PLANNING STUDIO</div>
+        <h1 className="mt-2 font-[Georgia,serif] text-[30px] leading-tight tracking-[-0.04em] text-[var(--ink)]">Design a more resilient farm.</h1>
+        <p className="mt-2 max-w-[350px] text-[12px] leading-relaxed text-[var(--muted)]">Four steps from real land to an explainable, resource-aware plan.</p>
+      </div>
+      <nav className="flex border-b border-[var(--line-strong)]" aria-label="Planning steps">
         {STEPS.map((s, i) => (
           <button
             key={s}
             onClick={() => setStep(i + 1)}
-            className="flex flex-1 items-center gap-2 border-b-2 px-3 py-2.5 text-left text-[12px]"
+            aria-current={step === i + 1 ? "step" : undefined}
+            className="flex flex-1 items-center justify-center gap-2 border-b-2 px-2 py-3.5 text-left text-[12px]"
             style={{ borderColor: step === i + 1 ? "var(--accent)" : "transparent", color: step === i + 1 ? "var(--ink)" : "var(--muted)", fontWeight: step === i + 1 ? 600 : 400 }}
           >
-            <span className="num inline-flex h-[18px] w-[18px] items-center justify-center border text-[10.5px]" style={{ borderColor: step === i + 1 ? "var(--accent)" : "var(--line-strong)" }}>{i + 1}</span>
+            <span className="num inline-flex h-[20px] w-[20px] items-center justify-center rounded-full border text-[10.5px]" style={{ borderColor: step === i + 1 ? "var(--accent)" : "var(--line-strong)", background: step === i + 1 ? "var(--accent)" : "transparent", color: step === i + 1 ? "#fff" : "inherit" }}>{i + 1}</span>
             {s}
           </button>
         ))}
@@ -148,7 +154,7 @@ export default function PlanPanel(p: Props) {
         )}
       </div>
 
-      <div className="flex items-center justify-between border-t border-[var(--line-strong)] px-5 py-2.5">
+      <div className="flex items-center justify-between border-t border-[var(--line-strong)] bg-[#f8faf4] px-5 py-3.5">
         <button className="btn" disabled={step === 1} onClick={() => setStep(step - 1)}>Back</button>
         <span className="text-[11.5px] text-[var(--muted)]">Step {step} of 4</span>
         {step < 4 ? <button className="btn btn-primary" onClick={() => setStep(step + 1)}>Next</button> : <span className="w-[60px]" />}
@@ -225,4 +231,3 @@ function LandStep({ parcels, parcelInfo, st, set, chosen, area, onFit }: Props &
     </>
   );
 }
-

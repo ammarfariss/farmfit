@@ -6,8 +6,8 @@ const plexSans = IBM_Plex_Sans({ variable: "--font-plex-sans", subsets: ["latin"
 const plexMono = IBM_Plex_Mono({ variable: "--font-plex-mono", subsets: ["latin"], weight: ["400", "500"] });
 
 export const metadata: Metadata = {
-  title: "FarmFit - Farm portfolio optimizer",
-  description: "Mixed-integer farm portfolio optimization for plots in Qatar: crops x production techniques under land, budget, water and energy limits.",
+  title: "FarmFit — Plan with the land, not against it",
+  description: "Plan a farm on real Qatar cadastral plots. Explore crops and production systems with transparent data, water and energy limits, and explainable optimization.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

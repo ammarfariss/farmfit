@@ -1,395 +1,79 @@
-"use client";
+import Link from "next/link";
 
-import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Catalog, ExplorationArea, IterationRec, MissingInput, OptimizeResult, ParcelFC, SiteSummary } from "@/lib/types";
-import { API, compareScenarios, getCatalog, getContext, getExplorationArea, getParcels, getSiteSummary, optimizeStream } from "@/lib/api";
-import { buildRequest, initialState, unresolved, type PlanState } from "@/lib/state";
-import { layoutPlot } from "@/lib/layout";
-import { n0 } from "@/lib/format";
-import PlanPanel from "@/components/PlanPanel";
-import ResultsPanel from "@/components/ResultsPanel";
-import { Legend, MIN_PARCEL_ZOOM, type MapPiece } from "@/components/MapView";
-import { Notice } from "@/components/ui";
+const Arrow = () => <span aria-hidden="true" className="arrow-icon">↗</span>;
 
-const MapView = dynamic(() => import("@/components/MapView"), { ssr: false, loading: () => <div className="h-full w-full bg-[var(--bg)]" /> });
-
-export default function Page() {
-  const [cat, setCat] = useState<Catalog | null>(null);
-  const [missingInputs, setMissingInputs] = useState<MissingInput[]>([]);
-  const [parcels, setParcels] = useState<ParcelFC | null>(null);
-  const [parcelInfo, setParcelInfo] = useState({
-    label: "State of Qatar — approved cadastral plot boundaries",
-    sourceUrl: "https://services.gisqatar.org.qa/server/rest/services/Vector/CadastrePlots/FeatureServer/0",
-    count: 0, truncated: false, loading: false, error: null as string | null, zoomedOut: false,
-  });
-  const [st, setSt] = useState<PlanState | null>(null);
-  const [step, setStep] = useState(1);
-  const [mode, setMode] = useState<"plan" | "results">("plan");
-  const [running, setRunning] = useState(false);
-  const [stages, setStages] = useState<string[]>([]);
-  const [iters, setIters] = useState<IterationRec[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [results, setResults] = useState<Record<string, OptimizeResult>>({});
-  const [scenarioId, setScenarioId] = useState("normal");
-  const [loadingScen, setLoadingScen] = useState(false);
-  const [switching, setSwitching] = useState(false);
-  const [fitToken, setFitToken] = useState(0);
-  const [focus, setFocus] = useState<string[] | null>(null);
-  const [context, setContext] = useState<Record<string, { text: string } | undefined>>({});
-  const [explore, setExplore] = useState<ExplorationArea | null>(null);
-  const [showExplore, setShowExplore] = useState(false);
-  const [site, setSite] = useState<SiteSummary | null>(null);
-  const [siteLoading, setSiteLoading] = useState(false);
-  const [siteError, setSiteError] = useState<string | null>(null);
-  const siteReq = useRef(0);
-  const runRef = useRef(0);
-  const parcelReq = useRef(0);
-  /** every plot loaded so far, so a selection survives panning away from it */
-  const [known, setKnown] = useState<Record<string, ParcelFC["features"][number]>>({});
-
-  useEffect(() => {
-    getCatalog()
-      .then((c) => {
-        setCat(c);
-        setMissingInputs(c.missing_inputs ?? []);
-        setSt(initialState(c));
-      })
-      .catch((e) => setLoadError(String(e.message ?? e)));
-    // The opening viewport is chosen from live cadastral data, not hardcoded. If it cannot be determined
-    // the map still opens, on a documented fallback extent.
-    getExplorationArea()
-      .then((a) => setExplore(a))
-      .catch(() => setExplore(null));
-  }, []);
-
-  const set = useCallback((p: Partial<PlanState>) => setSt((s) => (s ? { ...s, ...p } : s)), []);
-
-  // ---- live cadastral plots for the current view
-  const minPlotArea = st?.minPlotArea ?? 0;
-  const onViewChange = useCallback(
-    (bbox: [number, number, number, number], zoom: number) => {
-      if (mode === "results") return;
-      if (zoom < MIN_PARCEL_ZOOM) {
-        setParcelInfo((p) => ({ ...p, zoomedOut: true, loading: false, count: 0 }));
-        return;
-      }
-      const id = ++parcelReq.current;
-      setParcelInfo((p) => ({ ...p, loading: true, zoomedOut: false, error: null }));
-      getParcels(bbox, minPlotArea)
-        .then((r) => {
-          if (id !== parcelReq.current) return;
-          setKnown((prev) => {
-            const next = { ...prev };
-            for (const f of r.featureCollection.features) next[f.properties.id] = f;
-            return next;
-          });
-          setParcels(r.featureCollection);
-          setParcelInfo((p) => ({ ...p, label: r.label, sourceUrl: r.source_url, count: r.count, truncated: r.truncated, loading: false, error: null }));
-        })
-        .catch((e) => {
-          if (id !== parcelReq.current) return;
-          setParcelInfo((p) => ({ ...p, loading: false, error: `Cadastral service: ${e.message ?? e}` }));
-        });
-    },
-    [mode, minPlotArea],
-  );
-
-  /** parcels currently drawn, plus any selected plot that has scrolled out of view */
-  const shownParcels: ParcelFC | null = useMemo(() => {
-    const inView = parcels?.features ?? [];
-    if (!inView.length && Object.keys(known).length === 0) return null;
-    const byId = new Map(inView.map((f) => [f.properties.id, f]));
-    for (const id of st?.selected ?? []) {
-      const f = known[id];
-      if (f && !byId.has(id)) byId.set(id, f);
-    }
-    return { type: "FeatureCollection", features: [...byId.values()] } as ParcelFC;
-  }, [parcels, st?.selected, known]);
-
-  const selectedKey = (st?.selected ?? []).join(",");
-  const cropKey = (st?.crops ?? []).join(",");
-  useEffect(() => {
-    if (mode !== "plan" || !shownParcels || !selectedKey) return;
-    const ids = selectedKey.split(",");
-    const plots = shownParcels.features
-      .filter((f) => ids.includes(f.properties.id))
-      .map((f) => ({ id: f.properties.id, name: f.properties.name, geometry: f.geometry, source: f.properties.data_status, registered_area_m2: f.properties.registered_area_m2 }));
-    if (!plots.length) return;
-    const id = ++siteReq.current;
-    let cancelled = false;
-    void (async () => {
-      await Promise.resolve();
-      if (cancelled) return;
-      setSiteLoading(true);
-      setSiteError(null);
-      try {
-        const r = await getSiteSummary(plots, cropKey ? cropKey.split(",") : []);
-        if (!cancelled && id === siteReq.current) setSite(r);
-      } catch (e) {
-        if (!cancelled && id === siteReq.current) setSiteError(e instanceof Error ? e.message : String(e));
-      } finally {
-        if (!cancelled && id === siteReq.current) setSiteLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedKey, cropKey, mode]);
-
-  const runScenario = useCallback(
-    async (scenario: string, fresh: boolean) => {
-      if (!st || !shownParcels) return;
-      const id = ++runRef.current;
-      setError(null);
-      if (fresh) {
-        setRunning(true);
-        setStages([]);
-        setIters([]);
-        setStep(4);
-      } else setSwitching(true);
-      const req = buildRequest(st, shownParcels, scenario);
-      try {
-        const r = await optimizeStream(req, (e) => {
-          if (id !== runRef.current) return;
-          if (e.event === "stage") setStages((s) => (s[s.length - 1] === e.message ? s : [...s, e.message]));
-          if (e.event === "iteration") setIters((it) => [...it, { k: e.k, lambda: e.lambda, net_gain: e.net_gain, capex: e.capex, F: e.F, mip_status: e.mip_status, mip_ms: e.mip_ms }]);
-        });
-        if (id !== runRef.current) return;
-        setResults((prev) => (fresh ? { [scenario]: r } : { ...prev, [scenario]: r }));
-        setScenarioId(scenario);
-        setMode("results");
-        if (fresh) {
-          const main = [...r.plots].sort((a, b) => b.allocated_m2 - a.allocated_m2)[0];
-          setFocus(main ? [main.plot_id] : r.plots.map((p) => p.plot_id));
-          setContext({});
-          setLoadingScen(true);
-          compareScenarios(req)
-            .then((c) => id === runRef.current && setResults((prev) => ({ ...c.scenarios, [scenario]: prev[scenario] ?? c.scenarios[scenario] })))
-            .catch(() => undefined)
-            .finally(() => setLoadingScen(false));
-          r.plots.forEach((pl) =>
-            getContext(pl.centroid[0], pl.centroid[1])
-              .then((c) => {
-                if (id !== runRef.current) return;
-                const mk = c.data?.nearest_market;
-                setContext((prev) => ({ ...prev, [pl.plot_id]: { text: c.available && mk ? `nearest market (OSM) ${mk.name}, ${(mk.distance_m / 1000).toFixed(1)} km straight-line` : "market context unavailable" } }));
-              })
-              .catch(() => undefined),
-          );
-        }
-        setFitToken((t) => t + 1);
-      } catch (e) {
-        if (id === runRef.current) setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        if (id === runRef.current) {
-          setRunning(false);
-          setSwitching(false);
-        }
-      }
-    },
-    [st, shownParcels],
-  );
-
-  const onScenario = (id: string) => {
-    if (results[id]) setScenarioId(id);
-    else void runScenario(id, false);
-  };
-
-  const result = mode === "results" ? results[scenarioId] : undefined;
-
-  const { pieces, layoutError } = useMemo(() => {
-    if (!result || !shownParcels) return { pieces: null as MapPiece[] | null, layoutError: null as string | null };
-    try {
-      const out: MapPiece[] = [];
-      for (const pl of result.plots) {
-        const feat = shownParcels.features.find((f) => f.properties.id === pl.plot_id);
-        if (!feat) continue;
-        const blocks = result.portfolio
-          .filter((b) => b.plot_id === pl.plot_id)
-          .map((b, i) => ({ id: `${pl.plot_id}-${b.crop}-${b.technique}-${i}`, label: `${b.crop_name} · ${b.technique_name}`, crop: b.crop, technique: b.technique, areaM2: b.area_m2 }));
-        if (!blocks.length) continue;
-        const lay = layoutPlot(feat.geometry, blocks, pl.access_m2);
-        for (const piece of lay.pieces) {
-          const b = result.portfolio.find((x) => piece.id.startsWith(`${pl.plot_id}-${x.crop}-${x.technique}-`));
-          out.push({ ...piece, plotId: pl.plot_id, cropName: b?.crop_name, techniqueName: b?.technique_name });
-        }
-      }
-      return { pieces: out.length ? out : null, layoutError: null };
-    } catch (e) {
-      return { pieces: null, layoutError: e instanceof Error ? e.message : String(e) };
-    }
-  }, [result, shownParcels]);
-
-  const onToggle = useCallback(
-    (id: string) => {
-      if (mode !== "plan") return;
-      setSt((s) => (s ? { ...s, selected: s.selected.includes(id) ? s.selected.filter((x) => x !== id) : [...s.selected, id] } : s));
-    },
-    [mode],
-  );
-
-  const legendTechs = useMemo(() => {
-    if (!result || !cat) return [];
-    return Array.from(new Set(result.portfolio.map((b) => b.technique))).map((id) => ({ id, name: cat.techniques[id].name }));
-  }, [result, cat]);
-
-  const selectedArea = useMemo(
-    () => (shownParcels?.features ?? []).filter((f) => st?.selected.includes(f.properties.id)).reduce((s, f) => s + f.properties.area_m2, 0),
-    [shownParcels, st?.selected],
-  );
-  const unresolvedCount = st ? unresolved(missingInputs, st).length : 0;
-
+function Brand({ light = false }: { light?: boolean }) {
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex h-[44px] shrink-0 items-center justify-between border-b border-[var(--line-strong)] bg-[var(--panel)] px-5">
-        <div className="flex items-baseline gap-3">
-          <span className="text-[15px] font-semibold tracking-tight">FarmFit</span>
-          <span className="text-[12px] text-[var(--muted)]">Farm portfolio optimizer · Qatar</span>
-        </div>
-        <div className="flex items-center gap-4 text-[11.5px] text-[var(--muted)]">
-          <span>Live Qatar cadastre</span>
-          <span className="num">{st?.selected.length ?? 0} plot{(st?.selected.length ?? 0) === 1 ? "" : "s"}</span>
-          {unresolvedCount > 0 && <span style={{ color: "var(--warn)" }}>{unresolvedCount} inputs needed</span>}
-          <span className="hidden md:inline">OR-Tools MIP · Dinkelbach · AquaCrop</span>
-        </div>
+    <Link href="/" className={`brand ${light ? "brand-light" : ""}`} aria-label="FarmFit home">
+      <span className="brand-mark" aria-hidden="true"><span /><span /><span /></span>
+      <span>farmfit<span className="brand-dot">.</span></span>
+    </Link>
+  );
+}
+
+function Landscape() {
+  return (
+    <div className="landscape-card" aria-label="Illustration of a farm divided into crop and production areas" role="img">
+      <div className="landscape-meta"><span><i className="live-dot" /> DECISION CANVAS</span><span>QATAR / 25°N</span></div>
+      <svg viewBox="0 0 780 570" className="landscape-svg" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M 32 0 L 0 0 0 32" fill="none" stroke="#cdd3bf" strokeWidth=".8" /></pattern>
+          <pattern id="rows" width="13" height="13" patternUnits="userSpaceOnUse"><path d="M 0 0 L 0 13" stroke="#afd687" strokeWidth="2" /></pattern>
+          <clipPath id="land"><path d="M115 87 L503 55 L694 171 L653 469 L409 517 L105 397 Z" /></clipPath>
+        </defs>
+        <rect width="780" height="570" fill="#e6e9dc" />
+        <rect width="780" height="570" fill="url(#grid)" />
+        <path d="M-30 480 C160 438 181 518 356 540 S616 536 800 497" fill="none" stroke="#cad2c6" strokeWidth="23" />
+        <path d="M46 -20 C68 154 41 215 -40 284" fill="none" stroke="#cad2c6" strokeWidth="13" />
+        <g clipPath="url(#land)">
+          <path d="M0 0 H425 V320 H0 Z" fill="#afce95" />
+          <path d="M0 0 H425 V320 H0 Z" fill="url(#rows)" opacity=".65" />
+          <path d="M425 0 H800 V303 H425 Z" fill="#477a62" />
+          <path d="M440 0 V303 M465 0 V303 M490 0 V303 M515 0 V303 M540 0 V303 M565 0 V303 M590 0 V303 M615 0 V303 M640 0 V303 M665 0 V303 M690 0 V303 M715 0 V303" stroke="#81a991" strokeWidth="9" opacity=".5" />
+          <path d="M0 318 H790 V600 H0 Z" fill="#d4bd8c" />
+          <path d="M0 318 H790 V600 H0 Z" fill="url(#rows)" opacity=".3" />
+          <path d="M415 0 V330 H800 M0 325 H800" fill="none" stroke="#f7f5eb" strokeWidth="18" />
+        </g>
+        <path d="M115 87 L503 55 L694 171 L653 469 L409 517 L105 397 Z" fill="none" stroke="#244b3c" strokeWidth="5" strokeLinejoin="round" />
+        <circle cx="115" cy="87" r="7" fill="#faf9f1" stroke="#244b3c" strokeWidth="3" />
+        <circle cx="694" cy="171" r="7" fill="#faf9f1" stroke="#244b3c" strokeWidth="3" />
+        <circle cx="409" cy="517" r="7" fill="#faf9f1" stroke="#244b3c" strokeWidth="3" />
+        <g fontFamily="Arial, sans-serif" fontSize="12" fontWeight="700" letterSpacing="1.3">
+          <rect x="178" y="185" width="168" height="45" rx="22" fill="#f7f5eb" /><text x="198" y="213" fill="#244b3c">01 / OPEN FIELD</text>
+          <rect x="477" y="177" width="171" height="45" rx="22" fill="#f7f5eb" /><text x="499" y="205" fill="#244b3c">02 / GREENHOUSE</text>
+          <rect x="233" y="392" width="165" height="45" rx="22" fill="#f7f5eb" /><text x="252" y="420" fill="#244b3c">03 / RESERVE</text>
+        </g>
+      </svg>
+      <div className="landscape-footer"><span>Illustrative allocation</span><span>Actual plans use selected cadastral plots <Arrow /></span></div>
+      <div className="float-note"><span className="eyebrow">DESIGNED FOR REAL CONSTRAINTS</span><strong>Every square metre<br />has a reason.</strong></div>
+    </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <div className="site">
+      <header className="site-header">
+        <div className="site-header-inner"><Brand /><nav aria-label="Main navigation"><a href="#how-it-works">How it works</a><a href="#method">The method</a><a href="https://github.com/ammarfariss/farmfit" target="_blank" rel="noreferrer">Open source <Arrow /></a></nav><Link href="/planner" className="header-cta">Open the planner <Arrow /></Link></div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
-        <aside className="w-[480px] shrink-0 border-r border-[var(--line-strong)] bg-[var(--panel)]">
-          {loadError ? (
-            <div className="p-5">
-              <Notice tone="bad">
-                Cannot reach the optimizer service at <span className="num">{API}</span>: {loadError}.
-                {process.env.NODE_ENV === "production" ? " Please refresh and try again." : " Start it with uvicorn app.main:app --port 8000 from the backend folder (see README)."}
-              </Notice>
-            </div>
-          ) : !cat || !st ? (
-            <div className="p-5 text-[var(--muted)]">Loading catalog…</div>
-          ) : mode === "plan" ? (
-            <PlanPanel
-              cat={cat}
-              missingInputs={missingInputs}
-              site={site}
-              siteLoading={siteLoading}
-              siteError={siteError}
-              parcels={shownParcels}
-              parcelInfo={parcelInfo}
-              st={st}
-              set={set}
-              step={step}
-              setStep={setStep}
-              running={running}
-              stages={stages}
-              iters={iters}
-              error={error}
-              onRun={() => void runScenario("normal", true)}
-              onFit={() => setFitToken((t) => t + 1)}
-            />
-          ) : (
-            <ResultsPanel
-              cat={cat}
-              scenarioId={scenarioId}
-              onScenario={onScenario}
-              results={results}
-              loadingScenarios={loadingScen}
-              switching={switching}
-              onEdit={() => {
-                setMode("plan");
-                setStep(3);
-              }}
-              context={context}
-            />
-          )}
-        </aside>
+      <main>
+        <section className="hero" aria-labelledby="hero-title">
+          <div className="hero-copy"><div className="hero-kicker"><span className="kicker-line" /> AGRICULTURAL DECISION INTELLIGENCE / QATAR</div><h1 id="hero-title">A better future<br />starts <em>on the land.</em></h1><p className="hero-lede">Know what your land can support. Explore crops and growing systems against your real water, energy and investment limits—then see the plan take shape inside your plot.</p><div className="hero-actions"><Link className="action-primary" href="/planner">Plan your farm <Arrow /></Link><a className="action-secondary" href="#how-it-works">See how it works <span aria-hidden="true">↓</span></a></div><div className="hero-proof"><span className="proof-icon" aria-hidden="true">✳</span><p>Built with official cadastral boundaries and traceable open data.<br /><strong>No imaginary plots. No invented inputs.</strong></p></div></div>
+          <div className="hero-visual"><Landscape /></div>
+        </section>
 
-        <main className="relative min-w-0 flex-1">
-          <MapView
-            initialBounds={explore ? (explore.bbox as [number, number, number, number]) : null}
-            parcels={shownParcels}
-            selected={mode === "results" && result ? result.plots.map((p) => p.plot_id) : (st?.selected ?? [])}
-            onToggle={onToggle}
-            onViewChange={onViewChange}
-            pieces={pieces}
-            fitToken={fitToken}
-            fitIds={mode === "results" ? focus : null}
-          />
-          <Legend techniques={legendTechs} show={mode === "results" && !!pieces} />
+        <div className="signal-bar" aria-label="Product capabilities"><span>ONE REAL PLOT</span><span className="signal-cross">✳</span><span>YOUR ACTUAL LIMITS</span><span className="signal-cross">✳</span><span>AN EXPLAINABLE PLAN</span><span className="signal-cross">✳</span><span>OPEN SOURCE</span></div>
 
-          {mode === "plan" && st && (
-            <div className="absolute left-3 top-3 max-w-[430px] border border-[var(--line-strong)] bg-[var(--panel)] text-[12px]">
-              <div className="px-3 py-1.5">
-                <span className="num">{n0(selectedArea)} m²</span>
-                <span className="text-[var(--muted)]"> selected · {parcelInfo.zoomedOut ? "zoom in to load cadastral plots" : "click a plot to select it"}</span>
-              </div>
-              {explore && (
-                <div className="border-t border-[var(--line)] px-3 py-1.5">
-                  <button className="flex w-full items-center gap-2 text-left" onClick={() => setShowExplore(!showExplore)}>
-                    <span className="inline-block h-1.5 w-1.5 shrink-0" style={{ background: "var(--accent)" }} />
-                    <span className="flex-1 text-[11.5px] text-[var(--muted)]">
-                      {explore.label} · {explore.window}
-                    </span>
-                    <span className="text-[11px] text-[var(--faint)]">{showExplore ? "hide" : "why here"}</span>
-                  </button>
-                  {showExplore && (
-                    <div className="mt-1.5 border-t border-[var(--line)] pt-1.5 text-[11px] leading-snug text-[var(--muted)]">
-                      <ul className="space-y-0.5">
-                        {explore.reasons.map((r, i) => (
-                          <li key={i} className="flex gap-1.5"><span className="mt-[6px] inline-block h-[3px] w-[3px] shrink-0 bg-[var(--faint)]" />{r}</li>
-                        ))}
-                      </ul>
-                      <div className="mt-1.5 text-[10.5px] text-[var(--faint)]">
-                        Chosen by querying {explore.windows_searched.length} farming municipalities in the live cadastre
-                        ({explore.windows_searched.reduce((a, w) => a + w.plots_found, 0).toLocaleString()} plots screened)
-                        and ranking clusters on {explore.criteria_used.join(", ").replace(/_/g, " ")}.
-                        {explore.criteria_uninformative.length > 0 &&
-                          ` ${explore.criteria_uninformative.join(", ").replace(/_/g, " ")} did not vary between candidates and was excluded.`}
-                        {" "}No plot is preselected.
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          {layoutError && <div className="absolute left-3 top-3 max-w-[360px]"><Notice tone="bad">Layout could not be generated: {layoutError}</Notice></div>}
-          {mode === "results" && result && (
-            <div className="absolute left-3 top-3 flex flex-wrap items-center gap-1 border border-[var(--line-strong)] bg-[var(--panel)] px-3 py-1.5 text-[12px]">
-              <span className="font-medium">{result.scenario.name}</span>
-              <span className="text-[var(--muted)]">· live cadastral geometry</span>
-              <span className="mx-1 text-[var(--line-strong)]">|</span>
-              <span className="eyebrow mr-1">Focus</span>
-              {result.plots.map((pl) => {
-                const on = focus?.length === 1 && focus[0] === pl.plot_id;
-                return (
-                  <button
-                    key={pl.plot_id}
-                    className="num mr-1 border px-1.5 text-[11px]"
-                    style={{ borderColor: on ? "var(--ink)" : "var(--line-strong)", background: on ? "var(--ink)" : "transparent", color: on ? "#fff" : "var(--ink)" }}
-                    onClick={() => {
-                      setFocus([pl.plot_id]);
-                      setFitToken((t) => t + 1);
-                    }}
-                  >
-                    {pl.plot_id}
-                  </button>
-                );
-              })}
-              <button
-                className="border border-[var(--line-strong)] px-1.5 text-[11px]"
-                onClick={() => {
-                  setFocus(result.plots.map((x) => x.plot_id));
-                  setFitToken((t) => t + 1);
-                }}
-              >
-                All
-              </button>
-            </div>
-          )}
-        </main>
-      </div>
+        <section className="story-section" id="how-it-works"><div className="section-intro"><span className="section-label">01 / THE WORKFLOW</span><h2>From a boundary<br />to a <em>better decision.</em></h2><p>FarmFit connects the decisions that usually live in separate spreadsheets, reports and maps. Start with land; leave with a plan you can question and refine.</p></div><div className="step-grid"><article className="step-card"><span className="step-index">01 <span>↗</span></span><div className="step-glyph glyph-boundary" aria-hidden="true"><span /></div><h3>Choose your land</h3><p>Select one or more real Qatar cadastral plots. FarmFit uses the official boundary and registered area as the starting point.</p></article><article className="step-card"><span className="step-index">02 <span>↗</span></span><div className="step-glyph glyph-layers" aria-hidden="true"><span /><span /><span /></div><h3>Set what matters</h3><p>Choose crops and production systems, then enter your budget, water, electricity and expected selling prices.</p></article><article className="step-card"><span className="step-index">03 <span>↗</span></span><div className="step-glyph glyph-chart" aria-hidden="true"><span /><span /><span /><span /></div><h3>Explore your plan</h3><p>See a feasible portfolio, resource use, projected finances and the constraint that limits further expansion.</p></article></div></section>
+
+        <section className="principle-section" id="method"><div className="principle-copy"><span className="section-label light-label">02 / THE PRINCIPLE</span><h2>Clarity is a<br /><em>competitive advantage.</em></h2><p>Every important input has a status. We show what came from an official dataset, what came from a scientific model, what you supplied and what remains an estimate.</p><p>When a required figure cannot be supported, FarmFit flags it and excludes the affected option. The result stays inspectable from source to decision.</p><Link href="/planner" className="text-link">Explore the planner <Arrow /></Link></div><div className="principle-stack"><div className="source-card"><span className="source-symbol">◉</span><div><strong>Verified</strong><span>Qatar cadastral data, climate and soil sources</span></div><span className="source-indicator">SOURCED</span></div><div className="source-card"><span className="source-symbol">◇</span><div><strong>Provided by you</strong><span>Budget, resource limits and selling prices</span></div><span className="source-indicator">INPUT</span></div><div className="source-card"><span className="source-symbol">△</span><div><strong>Estimate or unavailable</strong><span>Clearly labelled assumptions or excluded options</span></div><span className="source-indicator">VISIBLE</span></div></div></section>
+
+        <section className="technology-section"><div><span className="section-label">03 / BUILT IN THE OPEN</span><h2>Rigorous beneath.<br /><em>Useful on the surface.</em></h2></div><div className="technology-copy"><p>FarmFit combines Qatar cadastral and agricultural data with NASA POWER, SoilGrids, FAO AquaCrop where supported, and OR-Tools optimization. The calculation is mathematical optimization, with assumptions and limitations visible to the user.</p><div className="tech-tags"><span>Qatar cadastre</span><span>NASA POWER</span><span>SoilGrids</span><span>FAO AquaCrop</span><span>Google OR-Tools</span><span>MIT licensed</span></div><a className="text-link dark-link" href="https://github.com/ammarfariss/farmfit" target="_blank" rel="noreferrer">Explore the source code <Arrow /></a></div></section>
+
+        <section className="final-cta"><div><span className="section-label light-label">MAKE THE NEXT DECISION COUNT</span><h2>Put your land<br /><em>in perspective.</em></h2></div><Link href="/planner" className="action-primary final-button">Launch FarmFit <Arrow /></Link></section>
+      </main>
+      <footer className="site-footer"><Brand light /><span>Evidence-led planning for water-scarce agriculture.</span><span>Open source · Built for Qatar</span></footer>
     </div>
   );
 }

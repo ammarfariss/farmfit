@@ -42,15 +42,30 @@ export default function ResultsPanel(p: Props) {
   const infeasible = r.status === "INFEASIBLE" || r.portfolio.length === 0;
   const requiredExcluded = r.excluded.filter((e) => e.kind === "required_input").length;
 
+  const exportResult = () => {
+    const file = new Blob([JSON.stringify({ exported_at: new Date().toISOString(), application: "FarmFit", result: r }, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `farmfit-${r.scenario.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-plan.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-[var(--line-strong)] px-5 pb-3 pt-4">
+      <div className="border-b border-[var(--line-strong)] bg-[#f4f7ed] px-5 pb-5 pt-6">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="eyebrow">Result · {r.objective === "roi" ? "maximise 5-year ROI" : "maximise 5-year net cash flow"}</div>
-            <h2 className="mt-0.5 text-[19px] font-semibold tracking-tight">Your optimized farm</h2>
+            <h2 className="mt-2 font-[Georgia,serif] text-[30px] leading-tight tracking-[-0.04em]">Your farm, reimagined.</h2>
           </div>
-          <button className="btn" onClick={p.onEdit}>Edit inputs</button>
+          <div className="flex flex-wrap gap-2">
+            <button className="btn" onClick={exportResult} aria-label="Download complete optimization result as JSON">Export plan ↓</button>
+            <button className="btn" onClick={p.onEdit}>Edit inputs</button>
+          </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <Segmented
