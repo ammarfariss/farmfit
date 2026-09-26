@@ -6,13 +6,20 @@ status='missing') and is never silently replaced by an invented number.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field, asdict
 from datetime import date
 from pathlib import Path
 from typing import Any
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-CACHE_DIR = DATA_DIR / "cache"
+SHIPPED_CACHE_DIR = DATA_DIR / "cache"
+# Vercel Functions have an ephemeral writable /tmp directory. Keep packaged cache
+# files read-only and write refreshed responses to /tmp in production.
+CACHE_DIR = Path(
+    os.getenv("FARMFIT_CACHE_DIR")
+    or ("/tmp/farmfit-cache" if os.getenv("VERCEL") else str(SHIPPED_CACHE_DIR))
+)
 
 TYPES = {
     "official_qatar": "Official Qatar data",
