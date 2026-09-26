@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import * as turf from "@turf/turf";
@@ -35,9 +35,29 @@ const FALLBACK_BOUNDS: [number, number, number, number] = [51.17, 25.36, 51.27, 
 const ACCENT = "#1f5c4d";
 export const MIN_PARCEL_ZOOM = 12.5;
 
+function canDrawMap(): boolean {
+  try {
+    return typeof document !== "undefined" && !!document.createElement("canvas").getContext("webgl2");
+  } catch {
+    return false;
+  }
+}
+
+function boundaryPath(geometry: Geometry, bounds: [number, number, number, number]): string {
+  if (geometry.type !== "Polygon" && geometry.type !== "MultiPolygon") return "";
+  const polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+  const [west, south, east, north] = bounds;
+  return polygons.flatMap((polygon) => polygon.map((ring) =>
+    ring.map(([lon, lat], i) =>
+      `${i ? "L" : "M"}${((lon - west) * 1000 / (east - west)).toFixed(2)},${((north - lat) * 700 / (north - south)).toFixed(2)}`,
+    ).join(" ") + " Z",
+  )).join(" ");
+}
+
 export default function MapView({ parcels, selected, onToggle, onViewChange, pieces, fitToken, fitIds, initialBounds }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
+  const [simpleView, setSimpleView] = useState(() => !canDrawMap());
   const ready = useRef(false);
   const pending = useRef<(() => void)[]>([]);
   const markers = useRef<maplibregl.Marker[]>([]);
@@ -50,8 +70,10 @@ export default function MapView({ parcels, selected, onToggle, onViewChange, pie
   const whenReady = (fn: () => void) => (ready.current ? fn() : pending.current.push(fn));
 
   useEffect(() => {
-    if (!el.current || map.current) return;
-    const m = new maplibregl.Map({
+    if (!el.current || map.current || simpleView) return;
+    let m: maplibregl.Map;
+    try {
+      m = new maplibregl.Map({
       container: el.current,
       bounds: initialBounds ?? FALLBACK_BOUNDS,
       fitBoundsOptions: { padding: 30 },
@@ -66,7 +88,16 @@ export default function MapView({ parcels, selected, onToggle, onViewChange, pie
           { id: "osm", type: "raster", source: "osm", paint: { "raster-saturation": -0.9, "raster-contrast": -0.15, "raster-brightness-min": 0.2, "raster-opacity": 0.9 } },
         ],
       },
-    });
+      });
+    } catch (error) {
+      // MapLibre v6 requires WebGL2. Keep parcel selection usable on devices
+      // without a compatible GPU instead of letting an effect crash the page.
+      if (error instanceof Error && /WebGL/i.test(error.message)) {
+        queueMicrotask(() => setSimpleView(true));
+        return;
+      }
+      throw error;
+    }
     map.current = m;
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     m.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
@@ -126,7 +157,11 @@ export default function MapView({ parcels, selected, onToggle, onViewChange, pie
       map.current = null;
       ready.current = false;
     };
-  }, [initialBounds]);
+  }, [initialBounds, simpleView]);
+
+  useEffect(() => {
+    if (simpleView) onViewChange(initialBounds ?? FALLBACK_BOUNDS, 15);
+  }, [simpleView, initialBounds, onViewChange]);
 
   // live parcels + selection
   useEffect(() => {
@@ -190,7 +225,38 @@ export default function MapView({ parcels, selected, onToggle, onViewChange, pie
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitToken]);
 
-  return <div ref={el} className="h-full w-full" />;
+  const bounds = initialBounds ?? FALLBACK_BOUNDS;
+  return (
+    <div className="h-full w-full">
+      <div ref={el} className={simpleView ? "hidden" : "h-full w-full"} />
+      {simpleView && (
+        <div className="flex h-full flex-col bg-[var(--bg)] p-4">
+          <p className="mb-2 text-[12px] text-[var(--muted)]">Simplified plot view · official Qatar cadastral boundaries</p>
+          <svg viewBox="0 0 1000 700" role="img" aria-label="Selectable cadastral plots" className="min-h-0 w-full flex-1 border border-[var(--line)] bg-[#e9e7de]">
+            {(parcels?.features ?? []).map((feature) => (
+              <path key={feature.properties.id} d={boundaryPath(feature.geometry, bounds)} fill={selected.includes(feature.properties.id) ? ACCENT : "#b3b8ae"}
+                fillOpacity="0.65" fillRule="evenodd" stroke="#355447" strokeWidth="1.5"
+                onClick={() => onToggle(feature.properties.id)} style={{ cursor: "pointer" }} />
+            ))}
+            {(pieces ?? []).map((piece) => (
+              <path key={piece.id} d={boundaryPath(piece.geometry, bounds)} fill={piece.kind === "access" ? ACCESS_COLOR : piece.kind === "reserve" ? RESERVE_COLOR : TECH_COLOR[piece.technique ?? ""] ?? "#555"}
+                fillRule="evenodd" stroke="white" strokeWidth="1" />
+            ))}
+          </svg>
+          <div className="mt-2 max-h-28 overflow-y-auto text-[11px]">
+            {(parcels?.features ?? []).length === 0 ? <span>Loading plots for this area…</span> :
+              parcels!.features.map((feature) => (
+                <button key={feature.properties.id} type="button" onClick={() => onToggle(feature.properties.id)}
+                  className="mr-1 mb-1 border border-[var(--line-strong)] px-2 py-1 text-left"
+                  aria-pressed={selected.includes(feature.properties.id)}>
+                  {feature.properties.name} · {n0(feature.properties.area_m2)} m² {selected.includes(feature.properties.id) ? "✓" : ""}
+                </button>
+              ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function Legend({ techniques, show }: { techniques: { id: string; name: string }[]; show: boolean }) {
