@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from ..provenance import CACHE_DIR
+from ..provenance import CACHE_DIR, SHIPPED_CACHE_DIR
 
 USER_AGENT = "farmfit-mvp/0.1 (hackathon prototype; contact: see README)"
 
@@ -26,14 +26,16 @@ def _path(kind: str, key: Any) -> Path:
 def cached_fetch(kind: str, key: Any, fetch: Callable[[], Any], ttl_days: float | None = 30.0, force: bool = False) -> tuple[Any, dict]:
     """Return (payload, meta). meta.status is 'live', 'cached' or 'stale_cache' and always has retrieved_at."""
     p = _path(kind, key)
+    packaged = SHIPPED_CACHE_DIR / p.name
     cached = None
-    if p.exists():
+    cache_source = p if p.exists() else packaged if packaged.exists() else None
+    if cache_source is not None:
         try:
-            cached = json.loads(p.read_text(encoding="utf-8"))
+            cached = json.loads(cache_source.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             cached = None
     if cached and not force:
-        age_days = (time.time() - p.stat().st_mtime) / 86400
+        age_days = (time.time() - cache_source.stat().st_mtime) / 86400 if cache_source is not None else 1e9
         if ttl_days is None or age_days <= ttl_days:
             return cached["payload"], {**cached["meta"], "status": "cached"}
     try:
