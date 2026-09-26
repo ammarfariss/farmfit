@@ -1,6 +1,9 @@
 import type { Catalog, ExplorationArea, MissingInput, OptimizeRequest, OptimizeResult, ParcelFC, SiteSummary, StreamEvent } from "./types";
 
-export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+// The public frontend and API are separate Vercel projects. A build without an
+// explicit URL must still connect to the deployed API instead of the visitor's PC.
+export const API = (process.env.NEXT_PUBLIC_API_URL ??
+  (process.env.NODE_ENV === "production" ? "https://farmfit-api.vercel.app" : "http://127.0.0.1:8000")).replace(/\/$/, "");
 
 async function j<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -46,8 +49,11 @@ export const getSiteSummary = (plots: OptimizeRequest["plots"], crops: string[],
     j<SiteSummary>(r),
   );
 
-/** The opening viewport, chosen from live cadastral data rather than a hardcoded coordinate. */
-export const getExplorationArea = () => fetch(`${API}/api/exploration-area`).then((r) => j<ExplorationArea>(r));
+/** A fresh API choice, with the dated cadastral snapshot shipped for offline/slow starts. */
+export const getExplorationArea = () =>
+  fetch(`${API}/api/exploration-area`, { signal: AbortSignal.timeout(8000) })
+    .then((r) => j<ExplorationArea>(r))
+    .catch(() => fetch("/suggested-area.json").then((r) => j<ExplorationArea>(r)));
 
 export const getSourceStatus = () =>
   fetch(`${API}/api/sources/status`).then((r) =>

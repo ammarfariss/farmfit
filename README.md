@@ -61,6 +61,24 @@ npm run dev          # http://localhost:3000
 Tests: `cd backend && .venv\Scripts\python -m pytest` (96) and `cd frontend && npm test` (16).
 `data/cache/` ships with real API responses so everything works offline; with a network the adapters refresh it.
 
+## Vercel deployment
+
+This repository contains **two Vercel projects**. Set the frontend project's Root Directory to `frontend`
+and Framework Preset to **Next.js**. Keep the API project at the repository root with the FastAPI preset;
+the root `vercel.json` packages `data/**` with the Python function. Point the frontend at the API through
+`NEXT_PUBLIC_API_URL=https://farmfit-api.vercel.app` (or your own API URL), then redeploy because Next.js
+embeds public environment variables at build time. Production builds without this variable default to
+`https://farmfit-api.vercel.app`; local development defaults to `http://127.0.0.1:8000`.
+
+The opening map suggestion uses the API when it responds within eight seconds. If it does not, the frontend
+uses `frontend/public/suggested-area.json`, a dated 2026-09-25 snapshot from the same official cadastre
+calculation, so the map still opens promptly. Parcel boundaries themselves continue to load from the API;
+the interface reports a source error rather than substituting synthetic land when the cadastre is unavailable.
+
+Deployment checks: open `/`, confirm `GET /api/health` and `GET /api/catalog` on the API project, pan to
+the suggested area, select a real plot, fill the grower inputs and run an optimization. A passing build alone
+does not establish that external data services or the full user flow are available.
+
 ## 1. Cadastral map — live, official
 
 | | |

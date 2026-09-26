@@ -39,7 +39,6 @@ export default function Page() {
   const [focus, setFocus] = useState<string[] | null>(null);
   const [context, setContext] = useState<Record<string, { text: string } | undefined>>({});
   const [explore, setExplore] = useState<ExplorationArea | null>(null);
-  const [exploreReady, setExploreReady] = useState(false);
   const [showExplore, setShowExplore] = useState(false);
   const [site, setSite] = useState<SiteSummary | null>(null);
   const [siteLoading, setSiteLoading] = useState(false);
@@ -62,8 +61,7 @@ export default function Page() {
     // the map still opens, on a documented fallback extent.
     getExplorationArea()
       .then((a) => setExplore(a))
-      .catch(() => setExplore(null))
-      .finally(() => setExploreReady(true));
+      .catch(() => setExplore(null));
   }, []);
 
   const set = useCallback((p: Partial<PlanState>) => setSt((s) => (s ? { ...s, ...p } : s)), []);
@@ -264,8 +262,8 @@ export default function Page() {
           {loadError ? (
             <div className="p-5">
               <Notice tone="bad">
-                Cannot reach the optimizer service at <span className="num">{API}</span>: {loadError}. Start it with{" "}
-                <span className="num">uvicorn app.main:app --port 8000</span> from the backend folder (see README).
+                Cannot reach the optimizer service at <span className="num">{API}</span>: {loadError}.
+                {process.env.NODE_ENV === "production" ? " Please refresh and try again." : " Start it with uvicorn app.main:app --port 8000 from the backend folder (see README)."}
               </Notice>
             </div>
           ) : !cat || !st ? (
@@ -308,7 +306,6 @@ export default function Page() {
         </aside>
 
         <main className="relative min-w-0 flex-1">
-          {exploreReady && (
           <MapView
             initialBounds={explore ? (explore.bbox as [number, number, number, number]) : null}
             parcels={shownParcels}
@@ -319,7 +316,6 @@ export default function Page() {
             fitToken={fitToken}
             fitIds={mode === "results" ? focus : null}
           />
-          )}
           <Legend techniques={legendTechs} show={mode === "results" && !!pieces} />
 
           {mode === "plan" && st && (
