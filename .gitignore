@@ -1,0 +1,59 @@
+# --- secrets / credentials: never commit
+.env
+.env.*
+!.env.example
+!.env.local.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+*secret*
+*token*.txt
+
+# --- AI assistant instruction / state files
+CLAUDE.md
+AGENTS.md
+.claude/
+.cursor/
+.cursorrules
+
+# --- python
+backend/.venv/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# --- node / next
+node_modules/
+.next/
+out/
+build/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*
+frontend/public/maplibre/
+
+# --- IDE / OS / temp
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+*.tmp
+tmp/
+
+# data/cache/ is committed on purpose. It holds public API responses (NASA POWER, Qatar Open Data, SoilGrids,
+# AquaCrop, OSM, cadastral layer metadata) with retrieval dates, so the demo works offline. No credentials.
+# Cadastral *viewport* caches are excluded: they are keyed by an arbitrary map bounding box, so they are test
+# artifacts that never repeat for another user, and they account for 16 MB of a 17 MB cache directory.
+data/cache/cadastre_bbox_*.json
+data/cache/cadastre_ids_*.json
