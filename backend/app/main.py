@@ -25,9 +25,13 @@ app = FastAPI(title="FarmFit optimizer service", version="0.2.0")
 
 # Local development plus an optional comma-separated production allow-list.
 # For the public hackathon deployment we set ALLOWED_ORIGINS to the Vercel frontend URL.
-_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 _extra_origins = [item.strip() for item in os.getenv("ALLOWED_ORIGINS", "").split(",") if item.strip()]
-_origins.extend(_extra_origins)
+_origins = (
+    _extra_origins
+    if _extra_origins
+    else ["*"] if os.getenv("VERCEL")
+    else ["http://localhost:3000", "http://127.0.0.1:3000"]
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
